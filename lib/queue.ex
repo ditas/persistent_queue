@@ -6,16 +6,10 @@ defmodule PerQ.Queue do
     @tab :history
 
     def start_link() do
-
-        IO.puts("4")
-
         GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
     end
 
     def init(_opts) do
-
-        IO.puts("5")
-
         :ets.new(@tab, [:bag, :protected, :named_table, {:keypos, q_change(:timestamp)}])
         {:ok, %{:stack => [], :operation_num => 0, :await_acks => []}}
     end
@@ -42,13 +36,14 @@ defmodule PerQ.Queue do
 
         [h|t] = :lists.reverse(current_stack)
 
-        IO.inspect(t)
+        {:ok, tref} = :timer.send_after(10000, {:rejection_timeout, ref})
 
-        :timer.send_after(3000, {:rejection_timeout, ref})
+        IO.puts("add timer")
+        IO.inspect(tref)
 
         {:reply, {:ok, h, timestamp, new_operation_num}, Map.put(state, :stack, :lists.reverse(t))
             |> Map.put(:operation_num, new_operation_num)
-            |> Map.put(:await_acks, [{ref, h, timestamp, new_operation_num}|current_awaits])}
+            |> Map.put(:await_acks, [{ref, tref, h, timestamp, new_operation_num}|current_awaits])}
     end
     def handle_call(_msg, _from, state) do
         {:reply, :ok, state}
@@ -66,12 +61,13 @@ defmodule PerQ.Queue do
 
     def handle_info({:rejection_timeout, ref}, state) do
 
-        IO.puts("timeout #{ref}")
+        IO.puts("timeout")
+        IO.inspect(ref)
 
         current_stack = Map.get(state, :stack)
         current_awaits = Map.get(state, :await_acks)
         state1 = case List.keytake(current_awaits, ref, 0) do
-            {{_ref, value, _timestamp, _new_operation_num}, new_awaits} ->
+            {{_ref, _tref, value, _timestamp, _new_operation_num}, new_awaits} ->
                 Map.put(state, :stack, [value|current_stack])
                 |> Map.put(:await_acks, new_awaits)
             _ ->
@@ -81,22 +77,36 @@ defmodule PerQ.Queue do
     end
     def handle_info({:ack, ref}, state) do
 
-        IO.puts("ack #{ref}")
+        IO.puts("ack")
+        IO.inspect(ref)
 
         current_awaits = Map.get(state, :await_acks)
         state1 = case List.keytake(current_awaits, ref, 0) do
-            {{_ref, _value, timestamp, new_operation_num}, new_awaits} ->
+            {{_ref, tref, _value, timestamp, new_operation_num}, new_awaits} ->
+
+                IO.puts("timer to cancel")
+                IO.inspect(tref)
+
+                test = :timer.cancel(tref)
+
+                IO.inspect(test)
 
                 new_change = q_change(timestamp: timestamp, operation_num: new_operation_num, operation: {:get, ref})
                 :ets.insert(@tab, new_change)
 
                 Map.put(state, :await_acks, new_awaits)
             _ ->
+
+                IO.puts("some wrong ack")
+
                 state
         end
         {:noreply, state1}
     end
     def handle_info(_msg, state) do
+
+        IO.inspect(_msg)
+
         {:noreply, state}
     end
 
@@ -114,6 +124,6 @@ defmodule PerQ.Queue do
     end
 
     def ack(ref) do
-        send self(), {:ack, ref}
+        Process.send(__MODULE__, {:ack, ref}, [])
     end
 end
