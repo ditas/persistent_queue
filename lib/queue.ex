@@ -14,6 +14,22 @@ defmodule PerQ.Queue do
         {:ok, %{:stack => [], :operation_num => 0, :await_acks => []}}
     end
 
+    def handle_call({:revert, time, num}, _from, state) do
+
+#        ms1 = [{{:'$1',:'_'}, [{:>,:'$1',1}], [:true]}]
+#        ms2 = [{{:'$1',:'$2'}, [{:>,:'$1',1}], [:'$2']}]
+        ms = [{{:'_',:'$1',:'$2',:'$3'}, [{:>=,:'$1',time}], [:'$3']}]
+
+        selection = :ets.select(@tab, ms)
+
+        IO.inspect(selection)
+
+        test = :ets.info(@tab)
+
+        IO.inspect(test)
+
+        {:reply, :ok, state}
+    end
     def handle_call({:add, value} = operation, _from, state) do
         current_stack = Map.get(state, :stack)
         current_operation_num = Map.get(state, :operation_num)
@@ -126,4 +142,11 @@ defmodule PerQ.Queue do
     def ack(ref) do
         Process.send(__MODULE__, {:ack, ref}, [])
     end
+
+    def revert(timestamp, num) do
+        GenServer.call(__MODULE__, {:revert, timestamp, num})
+    end
+
+    # Internal function
+
 end
