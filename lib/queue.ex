@@ -15,12 +15,16 @@ defmodule PerQ.Queue do
     end
 
     #################### Call ####################
-    def handle_call(:stack, state) do
-        stack = Map.get(state, :stack)
-        {:reply, {:ok, stack}, state}
+    def handle_call(:stack, _from, state) do
+        current_stack = Map.get(state, :stack)
+        {:reply, {:ok, current_stack}, state}
     end
     def handle_call({:revert, time, num}, _from, state) do
-        ms = [{{:'_',:'$1',:'$2',:'$3'}, [{:>,:'$1',time}, {:>,:'$2',num}], [:'$3']}]
+#        ms = case num == :undefined do
+#            true -> [{{:'_',:'$1',:'_',:'$3'}, [{:>,:'$1',time}], [:'$3']}]
+#            false -> [{{:'_',:'$1',:'$2',:'$3'}, [{:>,:'$1',time}, {:>,:'$2',num}], [:'$3']}]
+#        end
+        ms = [{{:'_',:'$1',:'_',:'$3'}, [{:>,:'$1',time}], [:'$3']}]
         selection = :ets.select(@tab, ms)
 
         IO.inspect(selection)
@@ -52,7 +56,7 @@ defmodule PerQ.Queue do
 
         [h|t] = :lists.reverse(current_stack)
 
-        {:ok, tref} = :timer.send_after(10000, {:rejection_timeout, ref})
+        {:ok, tref} = :timer.send_after(15000, {:reject, ref})
 
         IO.puts("add timer")
         IO.inspect(tref)
@@ -72,12 +76,16 @@ defmodule PerQ.Queue do
 
         {:noreply, state}
     end
+    def handle_cast(:clear, _state) do
+        :ets.delete_all_objects(@tab)
+        {:noreply, %{:stack => [], :operation_num => 0, :await_acks => []}}
+    end
     def handle_cast(_msg, state) do
         {:noreply, state}
     end
 
     #################### Info ####################
-    def handle_info({:rejection_timeout, ref}, state) do
+    def handle_info({:reject, ref}, state) do
 
         IO.puts("timeout")
         IO.inspect(ref)
@@ -86,7 +94,14 @@ defmodule PerQ.Queue do
         current_awaits = Map.get(state, :await_acks)
         current_operation_num = Map.get(state, :operation_num)
         state1 = case List.keytake(current_awaits, ref, 0) do
-            {{_ref, _tref, value, _timestamp, _new_operation_num}, new_awaits} ->
+            {{_ref, tref, value, _timestamp, _new_operation_num}, new_awaits} ->
+
+                IO.puts("timer to cancel reject")
+                IO.inspect(tref)
+
+                test = :timer.cancel(tref)
+
+                IO.inspect(test)
 
                 reject_timestamp = :erlang.system_time(:millisecond)
                 reject_operation_num = current_operation_num + 1
@@ -109,7 +124,7 @@ defmodule PerQ.Queue do
         state1 = case List.keytake(current_awaits, ref, 0) do
             {{_ref, tref, value, timestamp, new_operation_num}, new_awaits} ->
 
-                IO.puts("timer to cancel")
+                IO.puts("timer to cancel ack")
                 IO.inspect(tref)
 
                 test = :timer.cancel(tref)
@@ -156,8 +171,19 @@ defmodule PerQ.Queue do
         Process.send(__MODULE__, {:ack, ref}, [])
     end
 
-    def revert(timestamp, num) do
-        GenServer.call(__MODULE__, {:revert, timestamp, num})
+    def reject(ref) do
+        Process.send(__MODULE__, {:reject, ref}, [])
+    end
+
+    def revert(timestamp) do
+        GenServer.call(__MODULE__, {:revert, timestamp, :undefined})
+    end
+#    def revert(timestamp, num) do
+#        GenServer.call(__MODULE__, {:revert, timestamp, num})
+#    end
+
+    def clear() do
+        GenServer.cast(__MODULE__, :clear)
     end
 
     #################### Internal function ####################
