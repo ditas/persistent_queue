@@ -1,21 +1,53 @@
 # PerQ
 
-**TODO: Add description**
+### Что это?
 
-## Installation
+Это персистентная очередь на двух стеках.
+Персистентность достигается сохранением операций над очередью в ets таблице. Если требуется хранение на диске логично будет заменить ets на, например, mnesia.
 
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `per_q` to your list of dependencies in `mix.exs`:
+### Как это работает?
+
+Просто.
 
 ```elixir
-def deps do
-  [
-    {:per_q, "~> 0.1.0"}
-  ]
-end
+iex -S mix
+
+PerQ.Queue.add(1)
+PerQ.Queue.add(2)
+PerQ.Queue.add(3)
 ```
+Это мы запустили консоль и добавили 3 элемента в очередь
 
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at [https://hexdocs.pm/per_q](https://hexdocs.pm/per_q).
+```elixir
+PerQ.Queue.stack()
+```
+Посмотреть, что в очереди
 
+```elixir
+PerQ.Queue.get("some_ref")
+PerQ.Queue.ack("some_ref")
+```
+Получить из очереди значение с подтверждением. Если подтверждение не было отправлено, то, через 15 секунд сработает таймер и выполнит reject. Иными словами, выбранное значение будет добавлено в конец очереди. Того же результата (не дожидаясь таймера) можно добиться, выполнив
+
+```elixir
+PerQ.Queue.get("some_ref")
+PerQ.Queue.reject("some_ref")
+```
+###### Внимание!
+Если выполнить повторно get с уже существуюшим ref'ом - будет возвращена ошибка. Иными словами, для каждой операции get должен быть уникальный ref, до тех пор пока эта операция на завершилась ack'ом или reject'ом.
+
+### Как работает откат?
+Выполнение каждой операции (add/get) возвращает кортеж вида {:ok, ... timestamp, operation_num}. timestamp можно считать ключом данной операции. Для отката на состояние соответствующей операции необходимо выполнить
+
+```elixir
+PerQ.Queue.revert(timestamp)
+```
+В ответ мы получим состояние очереди на сооветствующее время. При этом текущая очередь не изменится.
+
+### Прочее
+
+Добавлены тесты на основные операции. Запускаются:
+
+```elixir
+mix test
+```
