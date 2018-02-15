@@ -11,7 +11,7 @@ defmodule PerQ.Queue do
 
     def init(_opts) do
         :ets.new(@tab, [:bag, :protected, :named_table, {:keypos, q_change(:timestamp)}])
-        {:ok, %{:stack => [], :operation_num => 0, :await_acks => []}}
+        {:ok, %{:stack => [], :operation_num => 0, :await_acks => %{}}}
     end
 
     #################### Call ####################
@@ -20,10 +20,6 @@ defmodule PerQ.Queue do
         {:reply, {:ok, current_stack}, state}
     end
     def handle_call({:revert, time, num}, _from, state) do
-#        ms = case num == :undefined do
-#            true -> [{{:'_',:'$1',:'_',:'$3'}, [{:>,:'$1',time}], [:'$3']}]
-#            false -> [{{:'_',:'$1',:'$2',:'$3'}, [{:>,:'$1',time}, {:>,:'$2',num}], [:'$3']}]
-#        end
         ms = [{{:'_',:'$1',:'_',:'$3'}, [{:>,:'$1',time}], [:'$3']}]
         selection = :ets.select(@tab, ms)
 
@@ -51,19 +47,23 @@ defmodule PerQ.Queue do
         current_operation_num = Map.get(state, :operation_num)
         current_awaits = Map.get(state, :await_acks)
 
-        timestamp = :erlang.system_time(:millisecond)
-        new_operation_num = current_operation_num + 1
+        case Map.has_key?(current_awaits, ref) do
+            true -> {:reply, {:error, :dublicate_ref}, state}
+            false -> timestamp = :erlang.system_time(:millisecond)
+                     new_operation_num = current_operation_num + 1
 
-        [h|t] = :lists.reverse(current_stack)
+                     [h|t] = :lists.reverse(current_stack)
 
-        {:ok, tref} = :timer.send_after(15000, {:reject, ref})
+                     {:ok, tref} = :timer.send_after(15000, {:reject, ref})
 
-        IO.puts("add timer")
-        IO.inspect(tref)
+                     IO.puts("add timer")
+                     IO.inspect(tref)
 
-        {:reply, {:ok, h, timestamp, new_operation_num}, Map.put(state, :stack, :lists.reverse(t))
-            |> Map.put(:operation_num, new_operation_num)
-            |> Map.put(:await_acks, [{ref, tref, h, timestamp, new_operation_num}|current_awaits])}
+                     {:reply, {:ok, h, timestamp, new_operation_num}, Map.put(state, :stack, :lists.reverse(t))
+                      |> Map.put(:operation_num, new_operation_num)
+#                      |> Map.put(:await_acks, [{ref, tref, h, timestamp, new_operation_num}|current_awaits])}
+                      |> Map.put(:await_acks, Map.put(current_awaits, ref, {tref, h, timestamp, new_operation_num}))}
+        end
     end
     def handle_call(_msg, _from, state) do
         {:reply, :ok, state}
@@ -78,7 +78,7 @@ defmodule PerQ.Queue do
     end
     def handle_cast(:clear, _state) do
         :ets.delete_all_objects(@tab)
-        {:noreply, %{:stack => [], :operation_num => 0, :await_acks => []}}
+        {:noreply, %{:stack => [], :operation_num => 0, :await_acks => %{}}}
     end
     def handle_cast(_msg, state) do
         {:noreply, state}
@@ -93,8 +93,10 @@ defmodule PerQ.Queue do
         current_stack = Map.get(state, :stack)
         current_awaits = Map.get(state, :await_acks)
         current_operation_num = Map.get(state, :operation_num)
-        state1 = case List.keytake(current_awaits, ref, 0) do
-            {{_ref, tref, value, _timestamp, _new_operation_num}, new_awaits} ->
+#        state1 = case List.keytake(current_awaits, ref, 0) do
+        state1 = case Map.pop(current_awaits, ref) do
+#            {{_ref, tref, value, _timestamp, _new_operation_num}, new_awaits} ->
+            {{tref, value, _timestamp, _new_operation_num}, new_awaits} ->
 
                 IO.puts("timer to cancel reject")
                 IO.inspect(tref)
@@ -121,8 +123,10 @@ defmodule PerQ.Queue do
         IO.inspect(ref)
 
         current_awaits = Map.get(state, :await_acks)
-        state1 = case List.keytake(current_awaits, ref, 0) do
-            {{_ref, tref, value, timestamp, new_operation_num}, new_awaits} ->
+#        state1 = case List.keytake(current_awaits, ref, 0) do
+        state1 = case Map.pop(current_awaits, ref) do
+#            {{_ref, tref, value, timestamp, new_operation_num}, new_awaits} ->
+            {{tref, value, timestamp, new_operation_num}, new_awaits} ->
 
                 IO.puts("timer to cancel ack")
                 IO.inspect(tref)
@@ -178,9 +182,6 @@ defmodule PerQ.Queue do
     def revert(timestamp) do
         GenServer.call(__MODULE__, {:revert, timestamp, :undefined})
     end
-#    def revert(timestamp, num) do
-#        GenServer.call(__MODULE__, {:revert, timestamp, num})
-#    end
 
     def clear() do
         GenServer.cast(__MODULE__, :clear)
